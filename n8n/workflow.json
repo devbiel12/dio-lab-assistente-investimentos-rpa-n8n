@@ -1,0 +1,350 @@
+{
+  "name": "My workflow 3",
+  "nodes": [
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        2096,
+        -16
+      ],
+      "id": "5017a08f-b0b5-4497-a057-2752162f9c92",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "clientes",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "4e8b2195-ef19-4d8b-9dc1-1954d9fe9dfb",
+      "name": "Conexão com o programa em python",
+      "webhookId": "7d21fc58-b080-4729-95a8-f8be3df8a9ea"
+    },
+    {
+      "parameters": {
+        "url": "https://digitalinnovationone.github.io/dio-lab-assistente-investimentos-rpa-n8n/data.csv",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "id": "058b6dea-61fe-4e5c-a1c4-500873d08a6a",
+      "name": "Extração dos dados CSV"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        608,
+        -128
+      ],
+      "id": "08ca4ebf-e552-4307-a4ef-37f6c7f5f19e",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pega o CSV como texto do HTTP Request\nconst csvRaw = $json.data ?? $json.body ?? $json;\nconst text = (typeof csvRaw === \"string\") ? csvRaw : JSON.stringify(csvRaw);\n\nconst lines = text.split(/\\r?\\n/).map(l => l.trim()).filter(Boolean);\nconst headers = lines[0].split(\",\").map(h => h.trim());\n\nconst investimentos = lines.slice(1).map(line => {\n  const cols = line.split(\",\").map(c => c.trim());\n  const obj = {};\n  headers.forEach((h, i) => obj[h] = cols[i] ?? \"\");\n\n  // Normaliza minimo para numero\n  obj.minimo = Number(String(obj.minimo).replace(/[^\\d]/g, \"\")) || 0;\n\n  return obj;\n});\n\nreturn [{ json: { investimentos } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        0
+      ],
+      "id": "11ea777a-dd45-47c7-833c-c871d343e151",
+      "name": "Parser Csv"
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Pega os clientes que vieram do Webhook\n// (Você pode usar $items(\"Nome Exato Do Nó\") para garantir que não se perde)\nconst clientes = $items(\"Conexão com o programa em python\")[0].json.body.clientes || [];\n\n// 2. Pega os investimentos que o seu nó \"Parser Csv\" já organizou!\nconst investimentos = $items(\"Parser Csv\")[0].json.investimentos || [];\n\n// Função para transformar \"R$ 12.500,00\" em número 12500\nfunction parseBRL(valor) {\n  if (!valor) return 0;\n  const s = String(valor)\n    .replace(\"R$\", \"\")\n    .replace(/\\./g, \"\")\n    .replace(\",\", \".\")\n    .replace(/[^\\d.]/g, \"\")\n    .trim();\n  const n = Number(s);\n  return Number.isFinite(n) ? n : 0;\n}\n\nconst resultados = [];\n\n// 3. Percorre cada cliente, cruza com os investimentos e cria a mensagem\nfor (const cliente of clientes) {\n  const nomeCliente = cliente.nome || \"\";\n  const emailCliente = cliente.email || \"\";\n  const perfilCliente = cliente.perfil || \"\";\n  const saldoTexto = cliente.saldo || \"\";\n  const saldoNum = parseBRL(saldoTexto);\n\n  // Encontra a opção de investimento que bate com o perfil E cabe no saldo\n  const recomendacao = investimentos.find(inv => \n    inv.perfil.toLowerCase() === perfilCliente.toLowerCase() && saldoNum >= inv.minimo\n  );\n\n  if (recomendacao) {\n    // AQUI você cria a mensagem personalizada para este cliente:\n    const mensagem = `Olá ${nomeCliente}! Com base no seu perfil (${perfilCliente}), recomendamos a aplicação em **${recomendacao.produto}** (investimento mínimo de R$ ${recomendacao.minimo}). Com seu saldo disponível de ${saldoTexto}, você já pode começar a investir com rentabilidade estimada de ${recomendacao.rentabilidade}.`;\n\n    resultados.push({\n      nome: nomeCliente,\n      email: emailCliente,\n      perfil: perfilCliente,\n      saldo_original: saldoTexto,\n      saldo_numerico: saldoNum,\n      produto_recomendado: recomendacao.produto,\n      rentabilidade: recomendacao.rentabilidade,\n      valor_minimo: recomendacao.minimo,\n      mensagem_gerada: mensagem // <-- A mensagem personalizada pronta!\n    });\n  }\n}\n\n// 4. Retorna a lista final para o n8n\nreturn resultados.map(resultado => ({ json: resultado }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        768,
+        0
+      ],
+      "id": "a894949b-f425-4105-8093-f8ff7d59df98",
+      "name": "Merger do csv"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Se veio dentro de .resultados usa ele; senão, pega TODOS os itens do nó anterior ($input.all())\nconst resultados = $json.resultados ? $json.resultados : $input.all().map(item => item.json);\nfunction parseBRL(valor) {\n  if (!valor) return 0;\n  const s = String(valor)\n    .replace(\"R$\", \"\")\n    .replace(/\\./g, \"\")\n    .replace(\",\", \".\")\n    .replace(/[^\\d.]/g, \"\")\n    .trim();\n  const n = Number(s);\n  return Number.isFinite(n) ? n : 0;\n}\nconst out = resultados.map(c => {\n  const saldoNum = c.saldo_num ?? parseBRL(c.saldo_texto ?? c.saldo_original ?? c.saldo);\n\n  return {\n    json: {\n      email_to: String(c.email || \"\").trim(),\n      nome: String(c.nome || \"\").trim(),\n      perfil: c.perfil,\n      saldo_texto: c.saldo_texto ?? c.saldo_original ?? c.saldo,\n      saldo_num: saldoNum,\n      recomendacao: c.recomendacao ?? c.produto_recomendado,\n      motivo: c.motivo || \"saldo_ok\",\n      mensagem_base: c.mensagem_escolhida || c.mensagem_gerada || c.mensagem || \"\",\n      copy_rules: {\n        idioma: \"PT-BR\",\n        tom: \"amigável e profissional\",\n        tamanho: \"curto (4-6 linhas)\",\n        evitar: [\"promessas de ganho\", \"garantias\", \"linguagem agressiva\"]\n      }\n    }\n  };\n});\n\nreturn out;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        928,
+        0
+      ],
+      "id": "83c5cbf8-cef8-4767-99fb-1b8c3963e455",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-3.1-flash-lite",
+          "mode": "list",
+          "cachedResultName": "models/gemini-3.1-flash-lite"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=Escreva um e-mail curto em pt-BR para o cliente abaixo sem prometer ganhos e sem garantias.\n\nCliente:  {{ $json.nome }}\nPerfil: {{ $json.perfil }}\nSaldo: {{ $json.saldo_texto }}\n\nRecomendação:\nProduto: {{ $json.recomendacao }}\nMinimo: {{ $('Merger do csv').item.json.valor_minimo }}\nRentabilidade: {{ $('Merger do csv').item.json.rentabilidade }},\n\nRetorne APENAS JSON com:\n{\n  \"subject\": \"...\",\n  \"text_body\": \"...\",\n  \"html_body\": \"...\"\n}\nMotivo: {{ $json.motivo }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        1120,
+        -128
+      ],
+      "id": "c83c7afc-1a00-45c9-8d58-65cde9422697",
+      "name": "Message a model",
+      "retryOnFail": true,
+      "maxTries": 4,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "googlePalmApi": {
+          "id": "KksvBrs7JEN9vETp",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Puxa a lista de clientes do nó anterior à IA\n// ATENÇÃO: Se o seu nó anterior tiver outro nome, coloque o nome exato dele aqui:\nconst clientesOriginais = $items(\"Merger do csv\");\n\nreturn $input.all().map((item, index) => {\n  // Pega os dados originais do cliente correspondente\n  const cliente = clientesOriginais[index]?.json || {};\n\n  // 2. Função \"radar\": procura o texto gerado pela IA onde quer que ele esteja no JSON de saída\n  function extrairTextoIA(obj) {\n    if (typeof obj === 'string' && (obj.includes('\"subject\"') || obj.includes('subject'))) return obj;\n    if (typeof obj === 'string' && obj.length > 20) return obj;\n    if (typeof obj === 'object' && obj !== null) {\n      for (let key in obj) {\n        let res = extrairTextoIA(obj[key]);\n        if (res) return res;\n      }\n    }\n    return null;\n  }\n\n  // 3. Obtém o texto da IA\n  let textoIA = extrairTextoIA(item.json) || item.json.text || item.json.response || \"{}\";\n  let respostaIA = {};\n  \n  // 4. Limpa blocos de markdown ```json e faz o parse\n  try {\n    const textoLimpo = String(textoIA).replace(/```json/gi, '').replace(/```/g, '').trim();\n    respostaIA = JSON.parse(textoLimpo);\n  } catch (erro) {\n    // Se a IA não devolveu em JSON puro, aproveita o texto diretamente\n    respostaIA = {\n      subject: `Oportunidade de Investimento - Perfil ${cliente.perfil || \"\"}`,\n      text_body: textoIA,\n      html_body: `<p>${textoIA}</p>`\n    };\n  }\n\n  // 5. Monta o objeto final limpo e normalizado\n  return {\n    json: {\n      ok: true,\n      to: cliente.email_to || cliente.email || \"\",\n      subject: respostaIA.subject || \"\",\n      text_body: respostaIA.text_body || \"\",\n      html_body: respostaIA.html_body || \"\",\n      meta: {\n        nome: cliente.nome,\n        perfil: cliente.perfil,\n        produto: cliente.recomendacao?.produto || cliente.recomendacao,\n        saldo: cliente.saldo_texto || cliente.saldo_numerico\n      }\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1424,
+        0
+      ],
+      "id": "d402a190-b172-4f9e-a304-31f50bb0b3be",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "sendTo": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.html_body }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1872,
+        -16
+      ],
+      "id": "6868e73d-e71e-4fe2-9018-2a2a14965bf0",
+      "name": "Send a message",
+      "onError": "continueRegularOutput",
+      "webhookId": "99d43132-a886-46d2-8e46-9808ad8e0bca",
+      "credentials": {
+        "googleApi": {
+          "id": "ynxd2NM5izSjrSDt",
+          "name": "Google Service Account account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "60149cb3-fc21-4811-9947-427d6155af9f",
+              "leftValue": "={{ $('Code in JavaScript1').item.json.to }}",
+              "rightValue": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1648,
+        0
+      ],
+      "id": "d729b486-b2ef-4e07-bda9-c39ddad6d892",
+      "name": "If"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Respond to Webhook": {
+      "main": [
+        []
+      ]
+    },
+    "Conexão com o programa em python": {
+      "main": [
+        [
+          {
+            "node": "Extração dos dados CSV",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extração dos dados CSV": {
+      "main": [
+        [
+          {
+            "node": "Parser Csv",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Merger do csv",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parser Csv": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merger do csv": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "4696c6a1-603b-4843-b172-1a86e87dcb98",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ee0acdb8e6dcd66c6c71f0517a993c797087461775acf54d76e6155fbf22f11d"
+  },
+  "nodeGroups": [],
+  "id": "ooFDzFr2HXITbmfj",
+  "tags": []
+}
