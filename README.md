@@ -193,7 +193,6 @@ No nó **Merger do csv**:
 > *Detalhe do e-mail estruturado e personalizado gerado pelo Google Gemini:*
 ![Resultado da IA](prints/03_resultado_ia.png)
 
-*(Dica: salve os seus prints na pasta `prints/` com esses mesmos nomes para que as imagens apareçam automaticamente aqui!)*
 
 ---
 
